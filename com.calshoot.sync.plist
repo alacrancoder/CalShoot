@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job for scheduled CalShoot syncs.
+
+  Note for editors: XML comments cannot contain two consecutive dashes, so
+  command flags are written here without their leading dashes.
+
+  Install (paths below already match this checkout):
+    cp com.calshoot.sync.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.calshoot.sync.plist
+
+  Check on it:
+    launchctl print gui/$(id -u)/com.calshoot.sync
+    tail -f ~/Library/Logs/calshoot.log
+
+  Run it now without waiting for the timer:
+    launchctl kickstart -p gui/$(id -u)/com.calshoot.sync
+
+  Stop it:
+    launchctl bootout gui/$(id -u)/com.calshoot.sync
+
+  Runs every 30 minutes, covering every TimeTree profile. The
+  "non_interactive" flag means it fails into the log instead of hanging on a
+  password prompt, and "notify" raises a macOS banner when that happens, which
+  is your cue to run `calshoot login` again. It stays silent while everything
+  is working.
+
+  This is a user agent: it runs while you are logged in, not at the login
+  screen. If the Mac is asleep when a run is due, launchd fires once shortly
+  after wake rather than replaying every missed interval.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.calshoot.sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gorka/CalShoot/.venv/bin/calshoot</string>
+        <string>sync</string>
+        <string>--all-profiles</string>
+        <string>--future-only</string>
+        <string>--non-interactive</string>
+        <string>--notify</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gorka/Library/Logs/calshoot.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/gorka/Library/Logs/calshoot.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>LowPriorityIO</key>
+    <true/>
+</dict>
+</plist>
