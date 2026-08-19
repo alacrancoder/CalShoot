@@ -667,6 +667,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
     config.set_profile(getattr(args, "profile", None))
+    if config.trim_log():
+        logger.info("Trimmed the log file; it had grown past its size limit.")
     moved = config.migrate_legacy_layout()
     if moved:
         logger.info("Moved %s into the 'default' profile.", ", ".join(moved))

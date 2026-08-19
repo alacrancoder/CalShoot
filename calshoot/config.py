@@ -169,6 +169,54 @@ def state_path() -> Path:
     return profile_home() / "state.db"
 
 
+# The scheduled job appends its output here forever. Trimmed at startup rather
+# than rotated by renaming: launchd holds the file open for the duration of a
+# run, so a rename would leave that run writing into the rotated-away file.
+# Truncating in place works because the handle is in append mode.
+LOG_MAX_BYTES = 1_000_000
+LOG_KEEP_BYTES = 200_000
+
+
+def log_path() -> Path:
+    """Where the scheduled job's output is collected."""
+    override = os.environ.get("CALSHOOT_LOG")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / "Library" / "Logs" / "calshoot.log"
+
+
+def trim_log(
+    path: Path | None = None,
+    max_bytes: int = LOG_MAX_BYTES,
+    keep_bytes: int = LOG_KEEP_BYTES,
+) -> bool:
+    """Shrink an oversized log to its most recent entries.
+
+    Keeps the tail, because recent runs are what you debug from. Returns True
+    when it trimmed. Never raises: failing to tidy a log must not stop a sync.
+    """
+    path = path or log_path()
+    try:
+        if not path.is_file() or path.stat().st_size <= max_bytes:
+            return False
+
+        with path.open("rb") as handle:
+            handle.seek(-keep_bytes, os.SEEK_END)
+            tail = handle.read()
+
+        # The slice almost certainly lands mid-line; drop the partial one.
+        newline = tail.find(b"\n")
+        if newline != -1:
+            tail = tail[newline + 1 :]
+
+        with path.open("wb") as handle:
+            handle.write(b"[earlier entries trimmed by calshoot]\n")
+            handle.write(tail)
+        return True
+    except OSError:
+        return False
+
+
 def write_private(path: Path, text: str) -> None:
     """Write a file only the current user can read, atomically.
 

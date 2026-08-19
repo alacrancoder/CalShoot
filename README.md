@@ -151,9 +151,9 @@ What to expect:
   after wake rather than replaying every missed interval. It runs while you are
   logged in, not at the login screen.
 
-Two things it cannot do for you. The TimeTree session eventually expires and
-only you can renew it with `calshoot login` — the banner is the cue. And
-nothing rotates `calshoot.log`; trim it occasionally if you care.
+One thing it cannot do for you: the TimeTree session eventually expires and
+only you can renew it with `calshoot login` — the banner is the cue. The log
+looks after itself, trimming to its most recent entries once it passes 1 MB.
 
 If you edit the plist, note that **XML comments cannot contain two consecutive
 dashes**, so flags are written there without their leading dashes. Validate any
@@ -336,7 +336,7 @@ To drop a single calendar without deleting anything in Google, use
 .venv/bin/python -m pytest
 ```
 
-149 tests cover the mapping (timezones, all-day boundaries, recurrence,
+165 tests cover the mapping (timezones, all-day boundaries, recurrence,
 reminders, colours, id generation), the sync engine (create/update/delete,
 high-water handling, failure paths, age filtering, calendar selection, dry
 run), TimeTree's backwards paging semantics, profile isolation, linking in
