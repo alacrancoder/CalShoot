@@ -309,3 +309,86 @@ class TestChangeFeedDeduplication:
     def test_drops_records_without_a_uuid(self):
         events = [TimeTreeEvent.from_dict(raw_event(uuid=None))]
         assert _latest_revision(events) == []
+
+
+class TestBreakageDetection:
+    """The canary must stop a sync, not merely mention a problem."""
+
+    def _shape_changed(self, count=20):
+        # start_at renamed: the realistic silent-breakage case.
+        out = []
+        for i in range(count):
+            e = raw_event(f"e{i}")
+            e["startAt"] = e.pop("start_at")
+            out.append(e)
+        return out
+
+    def test_a_changed_payload_shape_blocks_writes(self, state):
+        google = FakeGoogle()
+        report = Syncer(
+            FakeTimeTree([(self._shape_changed(), 900)]), google, state
+        ).sync_calendar(link_of(state))
+
+        assert not report.ok
+        assert "payload shape changed" in report.errors[0]
+        assert google.upserts == 0  # nothing garbage written to Google
+
+    def test_the_high_water_mark_is_held_so_nothing_is_skipped(self, state):
+        report = Syncer(
+            FakeTimeTree([(self._shape_changed(), 900)]), FakeGoogle(), state
+        ).sync_calendar(link_of(state))
+
+        assert not report.ok
+        # Once the cause is fixed, the same window is re-read rather than lost.
+        assert link_of(state).high_water == 0
+
+    def test_a_few_odd_events_still_sync(self, state):
+        events = [raw_event(f"e{i}") for i in range(50)]
+        events[0].pop("start_at")  # one weird record, not an API change
+        google = FakeGoogle()
+
+        report = Syncer(FakeTimeTree([(events, 900)]), google, state).sync_calendar(
+            link_of(state)
+        )
+
+        assert report.ok
+        assert report.created == 49
+        assert len(report.skipped) == 1
+
+    def test_healthy_data_raises_no_warning(self, state):
+        # A realistic high-water mark: TimeTree reports epoch milliseconds, so
+        # a live account's value is always near "now".
+        recent = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+        syncer = Syncer(
+            FakeTimeTree([([raw_event(updated_at=recent)], recent)]), FakeGoogle(), state
+        )
+        syncer.sync_all()
+        assert syncer.warnings == []
+
+    def test_stale_high_water_marks_raise_a_warning(self, state):
+        from calshoot.canary import MS_PER_DAY
+
+        ancient = int(
+            (datetime.now(tz=timezone.utc).timestamp() * 1000) - 30 * MS_PER_DAY
+        )
+        state.save_high_water(CAL_ID, ancient)
+
+        syncer = Syncer(FakeTimeTree([([], ancient)]), FakeGoogle(), state)
+        syncer.sync_all()
+
+        assert len(syncer.warnings) == 1
+        assert "silently doing nothing" in syncer.warnings[0]
+
+    def test_the_warning_can_be_switched_off(self, state):
+        from calshoot.canary import MS_PER_DAY
+
+        ancient = int(
+            (datetime.now(tz=timezone.utc).timestamp() * 1000) - 30 * MS_PER_DAY
+        )
+        state.save_high_water(CAL_ID, ancient)
+
+        syncer = Syncer(
+            FakeTimeTree([([], ancient)]), FakeGoogle(), state, quiet_days=0
+        )
+        syncer.sync_all()
+        assert syncer.warnings == []

@@ -19,6 +19,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from calshoot import config
+from calshoot.canary import (
+    DEFAULT_QUIET_DAYS,
+    check_event_schema,
+    silence_finding,
+)
 from calshoot.gcal.client import GoogleCalendarClient
 from calshoot.mapping import (
     MappingError,
@@ -105,12 +110,16 @@ class Syncer:
         dry_run: bool = False,
         skip_before: int | None = None,
         rename_calendars: bool = True,
+        quiet_days: int = DEFAULT_QUIET_DAYS,
     ):
         self.timetree = timetree
         self.google = google
         self.state = state
         self.dry_run = dry_run
         self.rename_calendars = rename_calendars
+        self.quiet_days = quiet_days
+        # Findings that apply to the run as a whole rather than one calendar.
+        self.warnings: list[str] = []
         # Epoch ms. Events that finished before this are not copied, which
         # matters on calendars carrying years of history nobody needs.
         self.skip_before = skip_before
@@ -129,7 +138,20 @@ class Syncer:
         # Re-read so reports carry the current names.
         fresh = {link.tt_calendar_id: link for link in self.state.links()}
         links = [fresh.get(link.tt_calendar_id, link) for link in links]
-        return [self.sync_calendar(link) for link in links]
+        reports = [self.sync_calendar(link) for link in links]
+
+        # Dead-man's switch. Checked after syncing, against the marks this run
+        # just wrote, so a run that genuinely saw changes never trips it.
+        quiet = silence_finding(
+            [link.high_water for link in self.state.links()],
+            int(datetime.now(tz=timezone.utc).timestamp() * 1000),
+            self.quiet_days,
+        )
+        if quiet:
+            logger.warning(quiet)
+            self.warnings.append(quiet)
+
+        return reports
 
     def _reconcile_names(self, links: list[CalendarLink]) -> None:
         """Follow TimeTree calendar renames.
@@ -226,6 +248,23 @@ class Syncer:
             logger.info("No changes for %r.", link.tt_calendar_name)
             self._advance_high_water(link, new_high_water, report)
             return report
+
+        # Before trusting any of this, confirm the payloads still have the
+        # shape we rely on. If they don't, stop rather than write nonsense
+        # into Google — and leave the high-water mark alone so nothing is
+        # skipped once the cause is understood.
+        schema = check_event_schema([event.raw for event in events])
+        if schema.broken:
+            report.errors.append(
+                f"TimeTree payload shape changed: {schema.describe()}. "
+                f"Refusing to sync this calendar until it is understood."
+            )
+            return report
+        if schema.unknown:
+            logger.debug(
+                "TimeTree sent fields we do not know about (harmless): %s",
+                ", ".join(sorted(schema.unknown)),
+            )
 
         labels = self._labels(link.tt_calendar_id)
 

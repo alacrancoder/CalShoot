@@ -9,7 +9,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-from calshoot import config
+from calshoot import canary, config
 from calshoot.gcal.auth import GoogleAuthError, clear_credentials, load_credentials
 from calshoot.gcal.client import GoogleCalendarClient, GoogleQuotaError
 from calshoot.state import State
@@ -330,16 +330,16 @@ def notify(title: str, message: str) -> None:
         logger.debug("Could not post notification: %s", exc)
 
 
-def _sync_one_profile(args, google, skip_before, only) -> tuple[list, list[str]]:
-    """Sync the profile currently selected. Returns (reports, problems)."""
+def _sync_one_profile(args, google, skip_before, only) -> tuple[list, list[str], list[str]]:
+    """Sync the selected profile. Returns (reports, notes, canary warnings)."""
     with State() as state:
         links = state.links()
         if not links:
-            return [], ["nothing linked"]
+            return [], ["nothing linked"], []
 
         selected = [link for link in links if only is None or link.tt_calendar_id in only]
         if not selected:
-            return [], ["none of the requested calendars are linked"]
+            return [], ["none of the requested calendars are linked"], []
 
         if args.full:
             for link in selected:
@@ -353,8 +353,10 @@ def _sync_one_profile(args, google, skip_before, only) -> tuple[list, list[str]]
             dry_run=args.dry_run,
             skip_before=skip_before,
             rename_calendars=not args.no_rename,
+            quiet_days=args.quiet_days,
         )
-        return syncer.sync_all(only=only), []
+        reports = syncer.sync_all(only=only)
+        return reports, [], list(syncer.warnings)
 
 
 def cmd_sync(args) -> int:
@@ -381,6 +383,7 @@ def cmd_sync(args) -> int:
     prefix = "[dry run] " if args.dry_run else ""
     google = None
     problems: list[str] = []
+    warnings: list[str] = []
     synced_any = False
 
     for profile in profiles:
@@ -391,7 +394,7 @@ def cmd_sync(args) -> int:
         try:
             if google is None:
                 google = _google(interactive=not args.non_interactive)
-            reports, notes = _sync_one_profile(args, google, skip_before, only)
+            reports, notes, canary = _sync_one_profile(args, google, skip_before, only)
         except (tt_auth.AuthenticationError, GoogleAuthError) as exc:
             # One broken account must not stop the others.
             print(f"  {exc}", file=sys.stderr)
@@ -400,6 +403,9 @@ def cmd_sync(args) -> int:
 
         for note in notes:
             print(f"  {note}")
+        for warning in canary:
+            print(f"  WARNING: {warning}")
+            warnings.append(f"{profile}: {warning}")
 
         for report in reports:
             synced_any = True
@@ -417,6 +423,13 @@ def cmd_sync(args) -> int:
             extra = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
             notify("CalShoot sync failed", f"{headline}{extra}")
         return 1
+
+    if warnings:
+        # Not a failure — the run completed — but something looks wrong enough
+        # that a human should look. Silence is how a broken scraper presents.
+        if args.notify:
+            notify("CalShoot may be silently broken", warnings[0])
+        return 0
 
     if args.notify and not synced_any:
         notify("CalShoot sync did nothing", "No calendars are linked. Run `calshoot link`.")
@@ -701,6 +714,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="fail instead of prompting (use for scheduled runs)",
     )
     p.add_argument("--max-notes", type=int, default=10, help="notes to print per calendar")
+    p.add_argument(
+        "--quiet-days",
+        type=int,
+        default=canary.DEFAULT_QUIET_DAYS,
+        metavar="N",
+        help="warn if no calendar has changed for this many days (0 disables)",
+    )
     p.set_defaults(func=cmd_sync)
 
     p = sub.add_parser(

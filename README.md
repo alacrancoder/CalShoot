@@ -12,7 +12,8 @@ now redirects to the termination notice, so a personal access token is no longer
 an option. CalShoot therefore talks to the same internal endpoints the TimeTree
 web app uses.
 
-That surface is unofficial and can change without notice.
+That surface is unofficial and can change without notice — see
+**Breakage detection** below for how CalShoot notices when it does.
 
 ### The `since` parameter is a trap
 
@@ -311,6 +312,29 @@ untouched and simply unlinked. The guards are covered by
 To drop a single calendar without deleting anything in Google, use
 `calshoot unlink <id>` instead.
 
+## Breakage detection
+
+The endpoints this depends on are unofficial and can change without notice.
+Loud failures already surface — a 500 raises, a 401 says the session died. The
+dangerous ones look like success, so two checks watch for them.
+
+**Payload shape.** Every sync verifies that events still carry the fields the
+mapping relies on (`uuid`, `title`, `start_at`, `end_at`, `updated_at`,
+`all_day`). If more than 20% of a calendar's events are missing one — a renamed
+or dropped field — that calendar is **refused rather than synced**, and its
+high-water mark is held so nothing is skipped once the cause is understood. A
+handful of odd records does not trip it. New unknown fields are logged, never
+alarmed: TimeTree adding a field is harmless.
+
+**Silence.** If no calendar on an account has reported a change for more than
+three days, the run warns. This is the dead-man's switch, and it is deliberately
+indifferent to *how* things broke — a silently emptied response, a degraded
+session, changed paging semantics all look identical from the outside, and all
+stop the high-water marks advancing. Tune it with `--quiet-days N`, or `0` to
+switch it off on a genuinely quiet fleet.
+
+A warning notifies but still exits 0; a shape change is an error and exits 1.
+
 ## Known limits
 
 - **One-way.** Edits made in Google to a synced event are overwritten the next
@@ -336,7 +360,7 @@ To drop a single calendar without deleting anything in Google, use
 .venv/bin/python -m pytest
 ```
 
-165 tests cover the mapping (timezones, all-day boundaries, recurrence,
+204 tests cover breakage detection, the mapping (timezones, all-day boundaries, recurrence,
 reminders, colours, id generation), the sync engine (create/update/delete,
 high-water handling, failure paths, age filtering, calendar selection, dry
 run), TimeTree's backwards paging semantics, profile isolation, linking in
