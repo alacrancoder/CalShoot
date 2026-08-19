@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -112,11 +113,39 @@ def _safe_profile(name: str) -> str:
 
 
 def profile_home(name: str | None = None) -> Path:
-    """Private directory for one TimeTree account."""
-    root = app_home() / "profiles" / _safe_profile(name or current_profile())
+    """Path to one account's private directory. Does not create it.
+
+    Deliberately read-only: resolving a path must never bring a profile into
+    existence, or every command run without --profile resurrects 'default'.
+    Writers call ensure_profile_home() instead.
+    """
+    return app_home() / "profiles" / _safe_profile(name or current_profile())
+
+
+def ensure_profile_home(name: str | None = None) -> Path:
+    """Create the profile directory, owner-only. Call before writing to it."""
+    root = profile_home(name)
     root.mkdir(parents=True, exist_ok=True)
     root.chmod(0o700)
     return root
+
+
+def profile_exists(name: str | None = None) -> bool:
+    """True when a profile holds anything at all."""
+    return profile_home(name).is_dir()
+
+
+def remove_profile(name: str) -> bool:
+    """Delete a profile's directory and everything in it.
+
+    Returns False when there was nothing to remove. Callers are responsible
+    for checking the profile is not still in use.
+    """
+    root = profile_home(name)
+    if not root.is_dir():
+        return False
+    shutil.rmtree(root)
+    return True
 
 
 def list_profiles() -> list[str]:

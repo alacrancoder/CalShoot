@@ -207,20 +207,59 @@ def cmd_unlink(args) -> int:
     return 0
 
 
+def _link_count(name: str) -> int:
+    """Links held by a profile, without bringing its database into existence."""
+    config.set_profile(name)
+    if not config.state_path().exists():
+        return 0
+    with State() as state:
+        return len(state.links())
+
+
+def _remove_profile(name: str, force: bool) -> int:
+    """Delete a profile's local files, refusing if it still has links."""
+    if not config.profile_exists(name):
+        print(f"No profile named {name!r}.", file=sys.stderr)
+        return 2
+
+    count = _link_count(name)
+    if count and not force:
+        print(
+            f"Profile {name!r} still has {count} linked calendar(s).\n"
+            f"Those Google calendars would be left behind with nothing tracking "
+            f"them. Run `calshoot reset --profile {name}` first, or pass --force "
+            f"to remove the profile anyway.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if config.remove_profile(name):
+        print(f"Removed profile {name!r} ({count} link(s) forgotten).")
+        print("Its Google calendars, if any, were left untouched.")
+        return 0
+    print(f"Nothing to remove for {name!r}.")
+    return 0
+
+
 def cmd_profiles(args) -> int:
+    if args.remove:
+        return _remove_profile(args.remove, args.force)
+
     names = config.list_profiles()
     if not names:
-        print("No profiles yet. Run `calshoot login` to create the default one.")
+        print("No profiles yet. Run `calshoot login` to create one.")
         return 0
 
     print("TimeTree accounts:")
     for name in names:
         config.set_profile(name)
-        signed_in = "signed in" if tt_auth.load_session() else "needs login"
-        with State() as state:
-            count = len(state.links())
-        print(f"  {name:<16} {signed_in:<12} {count} calendar(s) linked")
+        has_session = tt_auth.load_session() is not None
+        count = _link_count(name)
+        status = "signed in" if has_session else "needs login"
+        note = "" if (has_session or count) else "  (empty — safe to remove)"
+        print(f"  {name:<16} {status:<12} {count} calendar(s) linked{note}")
     print("\nUse `--profile NAME` on any command to pick one.")
+    print("Remove a leftover with `calshoot profiles --remove NAME`.")
     return 0
 
 
@@ -238,6 +277,10 @@ def cmd_status(args) -> int:
 
 
 def _print_links() -> None:
+    if not config.state_path().exists():
+        # Reading status must not create a profile that was never set up.
+        print("No calendars linked. Run `calshoot link`.")
+        return
     with State() as state:
         links = state.links()
         if not links:
@@ -562,6 +605,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_google_login)
 
     p = sub.add_parser("profiles", help="list configured TimeTree accounts")
+    p.add_argument("--remove", metavar="NAME", help="delete a profile's local files")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="remove even if the profile still has linked calendars",
+    )
     p.set_defaults(func=cmd_profiles)
 
     p = sub.add_parser("calendars", parents=[common], help="list calendars")

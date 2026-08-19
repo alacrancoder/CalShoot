@@ -70,6 +70,10 @@ class State:
     def __init__(self, path: Path | None = None):
         self.path = path or state_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.parent.chmod(0o700)
+        except OSError:
+            pass
         self._conn = sqlite3.connect(self.path)
         self._conn.row_factory = sqlite3.Row
         self._migrate()

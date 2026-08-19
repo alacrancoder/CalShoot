@@ -79,6 +79,7 @@ class TestLegacyMigration:
 
     def test_never_overwrites_an_existing_profile_file(self):
         config.set_profile(config.DEFAULT_PROFILE)
+        config.ensure_profile_home()
         config.session_path().write_text("keep me")
 
         root = config.app_home()
@@ -90,9 +91,14 @@ class TestLegacyMigration:
 
 class TestListing:
     def test_lists_profiles_that_exist(self):
-        config.profile_home("miami")
-        config.profile_home("keywest")
+        # ensure_ creates; plain profile_home() deliberately does not.
+        config.ensure_profile_home("miami")
+        config.ensure_profile_home("keywest")
         assert config.list_profiles() == ["keywest", "miami"]
+
+    def test_merely_resolving_a_path_does_not_list_it(self):
+        config.profile_home("ghost")
+        assert config.list_profiles() == []
 
     def test_empty_when_none_created(self):
         assert config.list_profiles() == []

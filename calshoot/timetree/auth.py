@@ -20,6 +20,7 @@ import requests
 from calshoot.config import (
     TIMETREE_API_V1,
     TIMETREE_USER_AGENT,
+    ensure_profile_home,
     session_path,
     write_private,
 )
@@ -88,6 +89,7 @@ def login(email: str, password: str) -> str:
 
 def save_session(session_id: str, email: str) -> None:
     """Cache the session cookie with owner-only permissions."""
+    ensure_profile_home()
     write_private(
         session_path(),
         json.dumps({"session_id": session_id, "email": email, "created_at": int(time.time())}),
