@@ -36,7 +36,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/gorka/CalShoot/.venv/bin/calshoot</string>
+        <string>/Users/gorka/Projects/calshoot/.venv/bin/calshoot</string>
         <string>sync</string>
         <string>--all-profiles</string>
         <string>--future-only</string>
